@@ -1,0 +1,136 @@
+# Windows RDP via Tailscale (with local user Sultan)
+name: Windows RDP via Tailscale
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rdp:
+    runs-on: windows-latest
+    timeout-minutes: 360
+    steps:
+      - name: Display Runner Region (Approximate)
+        shell: powershell
+        run: |
+          Write-Host "Fetching public IP and location..."
+          try {
+            $ip = (Invoke-RestMethod -Uri "https://api.ipify.org" -ErrorAction Stop).Trim()
+            $geo = Invoke-RestMethod -Uri "https://ipapi.co/$ip/json/" -ErrorAction Stop
+            Write-Host "##[group]Runner Location (approx.)"
+            Write-Host "IP: $ip"
+            Write-Host "City: $($geo.city)"
+            Write-Host "Region: $($geo.region)"
+            Write-Host "Country: $($geo.country_name)"
+            Write-Host "Timezone: $($geo.timezone)"
+            Write-Host "##[endgroup]"
+          } catch {
+            Write-Host "Unable to determine location. GitHub does not support region selection."
+          }
+
+      - name: Install Tailscale
+        shell: powershell
+        run: |
+          Write-Host "Downloading Tailscale installer..."
+          Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-1.76.3.exe" -OutFile "$env:TEMP\tailscale-setup.exe"
+          Write-Host "Installing Tailscale silently..."
+          Start-Process -FilePath "$env:TEMP\tailscale-setup.exe" -ArgumentList "/S" -Wait
+          Write-Host "Tailscale installation completed."
+
+      - name: Authenticate Tailscale
+        shell: powershell
+        env:
+          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+        run: |
+          if (-not $env:TAILSCALE_AUTH_KEY) {
+            Write-Error "TAILSCALE_AUTH_KEY secret is not set."
+            exit 1
+          }
+          Start-Sleep -Seconds 10
+          & "C:\Program Files\Tailscale\tailscale.exe" up --auth-key $env:TAILSCALE_AUTH_KEY --accept-routes --accept-dns
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Tailscale authentication failed."
+            exit 1
+          }
+          Write-Host "Tailscale authenticated successfully."
+
+      - name: Get Tailscale IP
+        shell: powershell
+        run: |
+          $ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
+          if (-not $ip) {
+            Write-Error "Failed to retrieve Tailscale IP."
+            exit 1
+          }
+          Write-Host "##[group]Tailscale IP Address"
+          Write-Host $ip
+          Write-Host "##[endgroup]"
+          echo "TAILSCALE_IP=$ip" >> $env:GITHUB_OUTPUT
+        id: tailscale_ip
+
+      - name: Disable Windows Password Complexity
+        shell: powershell
+        run: |
+          Write-Host "Disabling password complexity requirements..."
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" -Name "LimitBlankPasswordUse" -Value 0
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" -Name "PasswordComplexity" -Value 0
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" -Name "MinimumPasswordLength" -Value 0
+          gpupdate /force
+          Write-Host "Password complexity disabled."
+
+      - name: Create Local User 'Sultan' and Set Password
+        shell: powershell
+        run: |
+          $username = "Sultan"
+          $password = "WL3DEKABOHA"
+          try {
+            $existing = Get-LocalUser -Name $username -ErrorAction Stop
+            Write-Host "User $username already exists. Updating password."
+            $secure = ConvertTo-SecureString -String $password -AsPlainText -Force
+            Set-LocalUser -Name $username -Password $secure
+          } catch {
+            Write-Host "Creating user $username..."
+            $secure = ConvertTo-SecureString -String $password -AsPlainText -Force
+            New-LocalUser -Name $username -Password $secure -FullName "Sultan" -Description "RDP user" -AccountNeverExpires
+            if ($LASTEXITCODE -ne 0) {
+              Write-Error "Failed to create user $username."
+              exit 1
+            }
+          }
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username -ErrorAction SilentlyContinue
+          Write-Host "User $username added to Remote Desktop Users group."
+
+      - name: Enable Remote Desktop
+        shell: powershell
+        run: |
+          Write-Host "Enabling Remote Desktop..."
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "UserAuthentication" -Value 0
+          Set-Service -Name TermService -StartupType Automatic
+          Start-Service -Name TermService
+          New-NetFirewallRule -DisplayName "Remote Desktop (TCP-In)" -Direction Inbound -LocalPort 3389 -Protocol TCP -Action Allow
+          Write-Host "Remote Desktop enabled."
+
+      - name: Display Connection Information
+        shell: powershell
+        run: |
+          Write-Host "##[group]RDP Connection Details"
+          Write-Host "Tailscale IP: ${{ steps.tailscale_ip.outputs.TAILSCALE_IP }}"
+          Write-Host "RDP Port: 3389"
+          Write-Host "Username: Sultan"
+          Write-Host "Password: WL3DEKABOHA"
+          Write-Host "Connection Status: READY"
+          Write-Host "Connect using: mstsc.exe /v:${{ steps.tailscale_ip.outputs.TAILSCALE_IP }}:3389"
+          Write-Host "##[endgroup]"
+
+      - name: Keep Runner Alive
+        shell: powershell
+        run: |
+          Write-Host "Keeping runner active. This step will run until the job is cancelled or timeout."
+          $ip = "${{ steps.tailscale_ip.outputs.TAILSCALE_IP }}"
+          while ($true) {
+            Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Runner is alive."
+            Write-Host "  Tailscale IP: $ip"
+            Write-Host "  RDP: Sultan / (password set in workflow)"
+            Write-Host "  Use: mstsc /v:$ip:3389"
+            Start-Sleep -Seconds 300
+          }
