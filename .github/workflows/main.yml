@@ -67,15 +67,21 @@ jobs:
           echo "TAILSCALE_IP=$ip" >> $env:GITHUB_OUTPUT
         id: tailscale_ip
 
-      - name: Disable Windows Password Complexity
+      # ============================================================
+      # Reliably disable password complexity using secedit
+      # ============================================================
+      - name: Disable Password Complexity via secedit
         shell: powershell
         run: |
-          Write-Host "Disabling password complexity requirements..."
-          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" -Name "LimitBlankPasswordUse" -Value 0
-          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" -Name "PasswordComplexity" -Value 0
-          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" -Name "MinimumPasswordLength" -Value 0
-          gpupdate /force
-          Write-Host "Password complexity disabled."
+          Write-Host "Exporting current security policy..."
+          secedit /export /cfg C:\secpol.cfg
+          Write-Host "Modifying policy to disable password complexity..."
+          (Get-Content C:\secpol.cfg) -replace 'PasswordComplexity = 1', 'PasswordComplexity = 0' | Set-Content C:\secpol.cfg
+          (Get-Content C:\secpol.cfg) -replace 'MinimumPasswordLength = .+', 'MinimumPasswordLength = 0' | Set-Content C:\secpol.cfg
+          (Get-Content C:\secpol.cfg) -replace 'PasswordHistorySize = .+', 'PasswordHistorySize = 0' | Set-Content C:\secpol.cfg
+          Write-Host "Applying updated policy..."
+          secedit /configure /db secedit.sdb /cfg C:\secpol.cfg /areas SECURITYPOLICY
+          Write-Host "Policy applied. Password complexity disabled."
 
       - name: Create Local User 'Sultan' and Set Password
         shell: powershell
