@@ -1,4 +1,6 @@
 # Windows RDP via Tailscale (with local user Sultan)
+# This workflow uses a larger runner with 8 vCPU and 32 GB RAM.
+# If your organization does not have larger runners, change runs-on to windows-latest.
 name: Windows RDP via Tailscale
 
 on:
@@ -6,7 +8,8 @@ on:
 
 jobs:
   rdp:
-    runs-on: windows-latest
+    # Larger runner: Windows Server 2025, 8 vCPU, 32 GB RAM
+    runs-on: windows-2025-8core-32gb
     timeout-minutes: 360
     steps:
       - name: Display Runner Region (Approximate)
@@ -84,7 +87,6 @@ jobs:
         run: |
           $username = "Sultan"
           $password = "WL3DEKABOHA"
-          # Check if user exists
           $exists = Get-LocalUser -Name $username -ErrorAction SilentlyContinue
           if ($exists) {
             Write-Host "User $username already exists. Updating password..."
@@ -101,7 +103,6 @@ jobs:
               exit 1
             }
           }
-          # Add to Remote Desktop Users
           net localgroup "Remote Desktop Users" $username /add
           if ($LASTEXITCODE -ne 0) {
             Write-Warning "Failed to add $username to Remote Desktop Users group (may already be added)."
