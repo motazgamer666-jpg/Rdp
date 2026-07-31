@@ -1,6 +1,5 @@
 # Windows RDP via Tailscale (with local user Sultan)
-# This workflow uses a larger runner with 8 vCPU and 32 GB RAM.
-# If your organization does not have larger runners, change runs-on to windows-latest.
+# Uses the standard windows-latest runner (4 vCPU, 16 GB RAM)
 name: Windows RDP via Tailscale
 
 on:
@@ -8,8 +7,7 @@ on:
 
 jobs:
   rdp:
-    # Larger runner: Windows Server 2025, 8 vCPU, 32 GB RAM
-    runs-on: windows-2025-8core-32gb
+    runs-on: windows-latest
     timeout-minutes: 360
     steps:
       - name: Display Runner Region (Approximate)
