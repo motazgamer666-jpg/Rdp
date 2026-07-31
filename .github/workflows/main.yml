@@ -67,43 +67,51 @@ jobs:
           echo "TAILSCALE_IP=$ip" >> $env:GITHUB_OUTPUT
         id: tailscale_ip
 
-      # ============================================================
-      # Reliably disable password complexity using secedit
-      # ============================================================
-      - name: Disable Password Complexity via secedit
+      # Try to disable password complexity – this may or may not work,
+      # but we will use net user anyway which bypasses it.
+      - name: Disable Password Complexity (attempt)
         shell: powershell
         run: |
-          Write-Host "Exporting current security policy..."
+          Write-Host "Attempting to disable password complexity..."
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" -Name "PasswordComplexity" -Value 0 -Force
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" -Name "MinimumPasswordLength" -Value 0 -Force
           secedit /export /cfg C:\secpol.cfg
-          Write-Host "Modifying policy to disable password complexity..."
           (Get-Content C:\secpol.cfg) -replace 'PasswordComplexity = 1', 'PasswordComplexity = 0' | Set-Content C:\secpol.cfg
           (Get-Content C:\secpol.cfg) -replace 'MinimumPasswordLength = .+', 'MinimumPasswordLength = 0' | Set-Content C:\secpol.cfg
-          (Get-Content C:\secpol.cfg) -replace 'PasswordHistorySize = .+', 'PasswordHistorySize = 0' | Set-Content C:\secpol.cfg
-          Write-Host "Applying updated policy..."
-          secedit /configure /db secedit.sdb /cfg C:\secpol.cfg /areas SECURITYPOLICY
-          Write-Host "Policy applied. Password complexity disabled."
+          secedit /configure /db secedit.sdb /cfg C:\secpol.cfg /areas SECURITYPOLICY /quiet
+          Write-Host "Attempt completed."
 
-      - name: Create Local User 'Sultan' and Set Password
+      - name: Create Local User 'Sultan' using net user
         shell: powershell
         run: |
           $username = "Sultan"
           $password = "WL3DEKABOHA"
-          try {
-            $existing = Get-LocalUser -Name $username -ErrorAction Stop
-            Write-Host "User $username already exists. Updating password."
-            $secure = ConvertTo-SecureString -String $password -AsPlainText -Force
-            Set-LocalUser -Name $username -Password $secure
-          } catch {
-            Write-Host "Creating user $username..."
-            $secure = ConvertTo-SecureString -String $password -AsPlainText -Force
-            New-LocalUser -Name $username -Password $secure -FullName "Sultan" -Description "RDP user" -AccountNeverExpires
+          # Check if user already exists
+          $exists = Get-LocalUser -Name $username -ErrorAction SilentlyContinue
+          if ($exists) {
+            Write-Host "User $username already exists. Updating password..."
+            net user $username $password
+            if ($LASTEXITCODE -ne 0) {
+              Write-Error "Failed to update password for $username."
+              exit 1
+            }
+          } else {
+            Write-Host "Creating user $username with net user..."
+            net user $username $password /add /fullname:"Sultan" /comment:"RDP user"
             if ($LASTEXITCODE -ne 0) {
               Write-Error "Failed to create user $username."
               exit 1
             }
+            # Set account to never expire
+            net accounts /maxpwage:unlimited
+            wmic useraccount where "name='$username'" set PasswordExpires=false
           }
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username -ErrorAction SilentlyContinue
-          Write-Host "User $username added to Remote Desktop Users group."
+          # Add to Remote Desktop Users
+          net localgroup "Remote Desktop Users" $username /add
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Failed to add $username to Remote Desktop Users group (may already be added)."
+          }
+          Write-Host "User $username created/updated successfully."
 
       - name: Enable Remote Desktop
         shell: powershell
