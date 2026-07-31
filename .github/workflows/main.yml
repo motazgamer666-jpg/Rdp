@@ -67,8 +67,6 @@ jobs:
           echo "TAILSCALE_IP=$ip" >> $env:GITHUB_OUTPUT
         id: tailscale_ip
 
-      # Try to disable password complexity – this may or may not work,
-      # but we will use net user anyway which bypasses it.
       - name: Disable Password Complexity (attempt)
         shell: powershell
         run: |
@@ -86,25 +84,22 @@ jobs:
         run: |
           $username = "Sultan"
           $password = "WL3DEKABOHA"
-          # Check if user already exists
+          # Check if user exists
           $exists = Get-LocalUser -Name $username -ErrorAction SilentlyContinue
           if ($exists) {
             Write-Host "User $username already exists. Updating password..."
-            net user $username $password
+            net user $username $password /expires:never
             if ($LASTEXITCODE -ne 0) {
               Write-Error "Failed to update password for $username."
               exit 1
             }
           } else {
             Write-Host "Creating user $username with net user..."
-            net user $username $password /add /fullname:"Sultan" /comment:"RDP user"
+            net user $username $password /add /fullname:"Sultan" /comment:"RDP user" /expires:never
             if ($LASTEXITCODE -ne 0) {
               Write-Error "Failed to create user $username."
               exit 1
             }
-            # Set account to never expire
-            net accounts /maxpwage:unlimited
-            wmic useraccount where "name='$username'" set PasswordExpires=false
           }
           # Add to Remote Desktop Users
           net localgroup "Remote Desktop Users" $username /add
